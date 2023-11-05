@@ -1,6 +1,5 @@
-import axios, { Axios, AxiosError } from 'axios'
-import { loadPersistent, savePersistent } from './utils';
-import type { Entity, Fund, FundResponseData, Transaction, TransactionResponseData, UpdateResponse, ValuesRange } from './types';
+import axios, { AxiosError } from 'axios';
+import type { AddSheetResponse, BatchRequest, BatchResponse, Entity, Fund, RowData, Transaction, UpdateResponse, ValuesRange } from './types';
 
 const SHEET_ID = "16Q3kcikjtI2YiN-JwpZoRoHPxPuoOgaiCppt0ZcwgiQ";
 type ReturnPromiseType<T extends (...args: any) => Promise<any>> = T extends (...args: any) => Promise<infer R> ? R : any;
@@ -70,26 +69,23 @@ export default class GoogleSpreadsheetAPI {
   }
 
 
-  appendRow = async (sheetName: string, rowValues: any[]): Promise<number> => {
+  appendRow = async (sheetId: number, rowValues: RowData): Promise<number> => {
     try {
-      const response: UpdateResponse | undefined = await this.basicFetch(
-        "POST",
-        `https://sheets.googleapis.com/v4/spreadsheets/${this.spreadsheetId}/values/${sheetName}!A:A:append`,
-        {
-          values: [rowValues]
-        },
-        {
-          valueInputOption: 'USER_ENTERED',
-          insertDataOption: 'INSERT_ROWS',
-          includeValuesInResponse: false
-        }
+      const response = await this.batchUpdate(
+        [{
+          appendCells: {
+            sheetId: sheetId,
+            rows: rowValues,
+            fields: "*"
+          }
+        }]
       );
       if (!response) {
         return -1
       }
-      let range = response.updates.updatedRange as string;
+      //let range = response.updates.updatedRange as string;
       // get row number of appenden row
-      return Number.parseInt(range.split("!")[1].split(":")[0].substring(1))
+      return 100500//Number.parseInt(range.split("!")[1].split(":")[0].substring(1))
 
     } catch (error) {
       console.error('Error appending row:', error);
@@ -159,30 +155,36 @@ export default class GoogleSpreadsheetAPI {
       throw error;
     }
   }
-  createSheet = async (name: string): Promise<string[]> => {
+  createSheet = async (name: string): Promise<AddSheetResponse> => {
+    let response = await this.batchUpdate([
+      {
+        addSheet: {
+          properties: {
+            title: name
+          }
+        }
+      }
+    ])
+    return response.replies[0] as AddSheetResponse
+  }
+
+  batchUpdate = async (requests: BatchRequest[]): Promise<BatchResponse> => {
     try {
-      const response: ValuesRange = await this.basicFetch(
+      const response: BatchResponse = await this.basicFetch(
         "POST",
         `https://sheets.googleapis.com/v4/spreadsheets/${this.spreadsheetId}:batchUpdate`,
         {
-          requests: [
-            {
-              addSheet: {
-                properties: {
-                  title: name
-                }
-              }
-            }
-          ],
+          requests: requests,
           includeSpreadsheetInResponse: false,
         }
       );
 
-      return response.values;
+      return response;
     } catch (error: any) {
       console.error('Error getting row:', error.response?.data);
       throw error.response?.data;
     }
+
   }
 }
 
@@ -200,9 +202,10 @@ export function transformFundFromResponse(
     balance: Number.parseFloat(balance),
     budget: Number.parseFloat(budget),
     needSync: needSync == "TRUE",
-    id: 0,
+    id: "transformTransactionFromResponse TODO",
     remote: true
   };
+
   return result;
 }
 
@@ -218,7 +221,7 @@ export function transformTransactionFromResponse(vals: string[]): (Transaction &
     , description
     , synced: synced == "TRUE"
     , fromAccount: ""
-    , id: -1
+    , id: "transformTransactionFromResponse TODO"
     , remote: true
   }
 }
@@ -227,6 +230,33 @@ export function fundToRequest(fund: Fund) {
   return [fund.name, String(fund.budget), `=B4-SUM(INDIRECT("$A4")&"!$A$2:$A")`, '=NOT(XLOOKUP(FALSE;INDIRECT($A4&"!$D:$D");INDIRECT($A4&"!$D:$D");TRUE))']
 }
 
+export function fundToRequestObject(fund: Fund): { rows: RowData } {
+  return {
+    rows:
+    {
+      values: [
+        { userEnteredValue: { stringValue: fund.name } },
+        { userEnteredValue: { numberValue: fund.budget } },
+        { userEnteredValue: { formulaValue: `=B4-SUM(INDIRECT("$A4")&"!$A$2:$A")` } },
+        { userEnteredValue: { formulaValue: '=NOT(XLOOKUP(FALSE;INDIRECT($A4&"!$D:$D");INDIRECT($A4&"!$D:$D");TRUE))' } },
+      ]
+    }
+  }
+}
+
 export function transactionToRequest(transaction: Transaction) {
   return [String(transaction.amount), transaction.date, transaction.description, transaction.synced ? "TRUE" : "FALSE"]
+}
+
+export function transactionToRequestObject(transaction: Transaction): { rows: RowData } {
+  return {
+    rows: {
+      values: [
+        { userEnteredValue: { numberValue: transaction.amount } },
+        { userEnteredValue: { stringValue: transaction.date } },
+        { userEnteredValue: { stringValue: transaction.description } },
+        { userEnteredValue: { boolValue: transaction.synced } },
+      ]
+    }
+  }
 }

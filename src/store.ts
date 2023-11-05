@@ -1,6 +1,6 @@
-import { get, writable } from 'svelte/store';
-import API, { fundToRequest, transactionToRequest, transformFundFromResponse, transformTransactionFromResponse } from './api';
-import type { Notification, Transaction, TransactionResponseData } from './types';
+import { get, writable, type Writable } from 'svelte/store';
+import API, { fundToRequest, fundToRequestObject, transactionToRequest, transactionToRequestObject, transformFundFromResponse, transformTransactionFromResponse } from './api';
+import type { AddSheetResponse, BatchReply, BatchRequest, BatchResponse, Entity, Fund, Notification, Transaction, TransactionResponseData } from './types';
 import { loadPersistent, savePersistent } from './utils';
 import { declareCRUD, declarePersistStore } from './storeTools';
 
@@ -39,13 +39,40 @@ export let route = declarePersistStore<string>("route", "/")
 export let funds = declareCRUD(
     "funds",
     "Funds",
-    fundToRequest,
+    511610517,
+    fundToRequestObject,
     transformFundFromResponse,
     canRemote,
     api,
     notify,
     {
-        onCreate: async (fund) => await api.createSheet(fund.name)
+        onCreate: (fund: Fund) => ([
+            {
+                addSheet: {
+                    properties: {
+                        title: fund.name
+                    }
+                }
+            }
+        ]),
+        onCreateResponceHandler: (replies: BatchReply[], store: Writable<(Fund & Entity)[]>) => {
+            if (replies[1]) {
+                // update ID from remote and make it available for the hook
+                let sheetId = (replies[1] as AddSheetResponse).addSheet.properties.sheetId + ""
+
+                let vals = get(store)
+                let obj = vals.find(e => e.id == sheetId);
+                if (obj) {
+                    obj.id = sheetId
+                    obj.remote = true
+                }
+                store.set(vals)
+            }
+            else {
+                notify("Issue with network, will try again when become online", "system")
+            }
+
+        }
     })
 
 
@@ -96,11 +123,25 @@ export function canRemote(): boolean {
 
 
 export function getTransactionsStore(fundName: string) {
+    let fundIdString = get(funds.store).find(f => f.name === fundName)?.id
+    let fundId: number
+    if (fundIdString === undefined) {
+        console.log("Can't get transactions for fund: " + fundName + ". Check that ID that fund sheet is created and it's ID set to the fund object")
+        fundId = NaN
+    }
+    else {
+        fundId = Number.parseInt(fundIdString)
+        if (Number.isNaN(fundId)) {
+            throw new Error("Can't get transactions for fund: " + fundName + " with ID: " + fundIdString + ". Check that ID that fund sheet is created and it's ID set to the fund object")
+        }
+    }
+
     let key = `${fundName}_transactions`;
     let transactions = declareCRUD(
         key,
         fundName,
-        transactionToRequest,
+        fundId,
+        transactionToRequestObject,
         transformTransactionFromResponse,
         canRemote,
         api,

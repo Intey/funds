@@ -1,7 +1,17 @@
 import { writable, type Writable, get } from 'svelte/store';
 import { durableRequestBuilder, loadPersistent, savePersistent } from './utils';
-import type { Entity } from './types';
+import type { BatchReply, BatchRequest, BatchResponse, Entity, RowData } from './types';
 import API from './api';
+
+
+export interface CRUDStore<T> {
+    create: (v: T) => Promise<void>,
+    update: (id: string, v: T) => Promise<void>,
+    remove: (id: string) => Promise<void>,
+    retrieve: () => Promise<void>,
+    store: Writable<(T & Entity)[]>
+
+}
 
 
 export function declarePersistStoreForArray<T>(name: string, defaultValue: T): Writable<T> {
@@ -35,32 +45,27 @@ export function declarePersistStore<T>(name: string, defaultValue: T): Writable<
 }
 
 
-
 export function declareCRUD<T>(
     name: string,
     sheetName: string,
-    valueToArray: (v: T) => string[],
+    sheetId: number,
+    valueToRequestPayload: (v: T) => { rows: RowData },
     valueFromArray: (vals: string[]) => T & Entity,
     canRemote: () => boolean, api: API,
     notify: (message: string, type: string) => void,
     hooks: {
-        onCreate?: (createdObject: T) => void,
-        onRemove?: (removedObject: T) => void
+        onCreate?: (createdObject: T) => BatchRequest[],
+        onRemove?: (removedObject: T) => BatchRequest[],
+        onCreateResponceHandler?: (replies: BatchReply[], store: Writable<(T & Entity)[]>) => void
     } = {}
-) {
+): CRUDStore<T> {
     let store = declarePersistStoreForArray<(T & Entity)[]>(name, [])
     let makeDurable = durableRequestBuilder(canRemote)
-    let createFn = makeDurable(`${name}_create`, api.appendRow)
+    // let createFn = makeDurable(`${name}_create`, api.appendRow)
     let retrieveFn = makeDurable(`${name}_retrieve`, api.getRows)
-    let updateFn = makeDurable(`${name}_update`, api.updateRow)
-    let onCreateFn = async (obj: T) => null;
-    let onRemoveFn = async (obj: T) => null;
-    if (hooks.onCreate) {
-        onCreateFn = makeDurable(`${name}_onCreateHook`, hooks.onCreate)
-    }
-    if (hooks.onRemove) {
-        onRemoveFn = makeDurable(`${name}_onRemoveHook`, hooks.onRemove)
-    }
+    let updateFn = makeDurable(`${name}_update`, api.batchUpdate)
+    let createFn = makeDurable(`${name}_create`, api.batchUpdate)
+
     // let removeFn = makeDurable(`${name}_remove`, api.deleteRow)
     /*
     * create a new item. 
@@ -70,24 +75,23 @@ export function declareCRUD<T>(
     * 3. update id of created object in store
     */
     async function create(v: T) {
-        let tmpId = Date.now()
+        let tmpId = "" + Date.now()
         store.update(l => [...l, { ...v, id: tmpId, remote: false }])
-        let result = await createFn(sheetName, valueToArray(v))
-        if (result === null) {
-            notify("Issue with network, will try again when become online", "system")
-        } else {
-            // update ID from remote and make it available for the hook
-            let vals = get(store)
-            for (let obj of vals) {
-                if (obj.id == tmpId) {
-                    obj.id = result
-                    obj.remote = true
-                    tmpId = result
-                    break;
-                }
+        let requests: BatchRequest[] = [{
+            appendCells: {
+                sheetId,
+                // the data
+                ...valueToRequestPayload(v),
+                fields: "*" // response filter of output fields? 
             }
-            store.set(vals)
-            await onCreateFn({ ...v, id: tmpId, remote: true })
+        }]
+        if (hooks.onCreate) {
+            requests = [...requests, ...hooks.onCreate(v)]
+        }
+
+        let result = await createFn(requests)
+        if (hooks.onCreateResponceHandler && result !== null) {
+            hooks.onCreateResponceHandler(result.replies.splice(1), store)
         }
     }
     /*
@@ -109,7 +113,23 @@ export function declareCRUD<T>(
         })
     }
     async function update(id: string, v: T) {
-        let result = await updateFn(sheetName, valueToArray(v), Number.parseInt(id))
+
+        let requests: BatchRequest[] = [{
+            updateCells: {
+                // the data
+                ...valueToRequestPayload(v),
+                fields: "*", // response filter of output fields? 
+                area: {
+                    start:
+                    {
+                        sheetId, // TODO: get sheet id from create function
+                        rowIndex: Number.parseInt(id),
+                        columnIndex: 0
+                    }
+                }
+            }
+        }]
+        let result = await updateFn(requests)
         if (result === null) {
             notify("Issue with network, will try again when become online", "system")
         }

@@ -3,12 +3,16 @@
   import TransactionCard from "./Transaction.svelte";
   import { getTransactionsStore } from "./store";
   import type { Fund } from "./types";
+  import type { CRUDStore } from "./storeTools";
+  import type { Transaction } from "./types";
+  import { writable, type Writable } from "svelte/store";
   export let fund: Fund;
 
   let showTransactions: boolean = false;
+  let initialized = false;
 
-  let fundTransactionsAPI = getTransactionsStore(fund.name);
-  let store = fundTransactionsAPI.store;
+  let transactionAPI: CRUDStore<Transaction>;
+  let store: Writable<Transaction[]> = writable([]);
 
   let showSyncedTransactions = false;
 
@@ -20,9 +24,15 @@
   // Transaction.all();
 
   let handleOpenFund = (e: Event) => {
+    if (!initialized) {
+      transactionAPI = getTransactionsStore(fund.name);
+      store = transactionAPI.store;
+      initialized = true;
+    }
+
     showTransactions = !showTransactions;
     if (showTransactions) {
-      fundTransactionsAPI.retrieve();
+      transactionAPI.retrieve();
     }
   };
 </script>

@@ -1,5 +1,5 @@
 export interface Entity {
-    id: number | string
+    id: string
     remote: boolean
 }
 
@@ -24,7 +24,7 @@ export interface Transfer {
     toFund: string
 }
 
-export interface Transaction{
+export interface Transaction {
     amount: number
     date: string
     description: string
@@ -68,5 +68,66 @@ export interface UpdateResponse {
         updatedRows: number
         updatedColumns: number
         updatedCells: number
+    }
+}
+
+export type ExtendedValue =
+    { numberValue: number }
+    | { stringValue: string }
+    | { boolValue: boolean }
+    | { formulaValue: string }
+
+
+export interface CellData {
+    userEnteredValue: ExtendedValue
+}
+
+export interface RowData {
+    values: CellData[]
+}
+
+export type UpdateCellsRequest = {
+    updateCells: {
+        rows: RowData,
+        fields: string,
+        area: {
+            start:
+            {
+                sheetId: number,
+                rowIndex: number,
+                columnIndex: number
+            }
+        }
+    }
+}
+export type AppendCellsRequest = {
+    appendCells: {
+        sheetId: number,
+        rows: RowData,
+        fields: string
+    }
+}
+export type CreateSheetRequest = {
+    addSheet: {
+        properties: {
+            title: string
+        }
+    }
+}
+export type BatchRequest = UpdateCellsRequest | AppendCellsRequest | CreateSheetRequest
+
+export type BatchResponse = {
+    replies: (BatchReply)[]
+}
+export type BatchReply = {} | AddSheetResponse
+
+export type AddSheetResponse = {
+    addSheet:
+    {
+        properties: {
+            sheetId: number
+            title: string
+            index: number
+        }
     }
 }
